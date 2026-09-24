@@ -56,8 +56,32 @@ StringUIdemoAudioProcessorEditor::StringUIdemoAudioProcessorEditor(StringUIdemoA
             {
                 audioProcessor.resetTuning();
                 updateAllTuningLabels();
+                tuningMenu.setSelectedId(1, juce::dontSendNotification);
+                deleteTuningButton.setEnabled(false);
             };
         addAndMakeVisible(resetTuningButton);
+
+        // Menu e pulsanti accordatura personalizzata
+        tuningMenu.setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xFF242424));
+        tuningMenu.setColour(juce::ComboBox::textColourId, juce::Colours::white);
+        tuningMenu.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xFF4D453A));
+        tuningMenu.setJustificationType(juce::Justification::centred);
+        tuningMenu.onChange = [this]() { applySelectedTuning(tuningMenu.getSelectedId()); };
+        addAndMakeVisible(tuningMenu);
+
+        saveTuningButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF242424));
+        saveTuningButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        saveTuningButton.onClick = [this]() { promptSaveCustomTuning(); };
+        addAndMakeVisible(saveTuningButton);
+
+        deleteTuningButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF242424));
+        deleteTuningButton.setColour(juce::TextButton::textColourOffId, juce::Colours::lightgrey);
+        deleteTuningButton.onClick = [this]() { deleteSelectedCustomTuning(); };
+        addAndMakeVisible(deleteTuningButton);
+        deleteTuningButton.setEnabled(false);
+
+        populateTuningMenu();
+        tuningMenu.setSelectedId(1, juce::dontSendNotification);
 
         // Inizializza tutte le label di tuning con i valori correnti
         updateAllTuningLabels();
@@ -96,9 +120,9 @@ StringUIdemoAudioProcessorEditor::StringUIdemoAudioProcessorEditor(StringUIdemoA
     #pragma endregion
 
     #pragma region Setup Titoli Sezioni
-            // Definiamo i nomi delle 7 macro-aree (Ho inserito PHASER prima di REVERB)
+            // Definiamo i nomi delle 8 macro-aree
             juce::String nomiSezioni[numSezioni] = {
-                "OSCILLOSCOPIO", "MASTER VOLUME", "PARAMETRI FISICI", "DELAY", "DISTORTION", "PHASER", "REVERB"
+                "OSCILLOSCOPIO", "MASTER VOLUME", "PARAMETRI FISICI", "ENVELOPE ADSR", "DISTORTION", "DELAY", "PHASER", "REVERB"
             };
 
             for (int i = 0; i < numSezioni; ++i)
@@ -111,14 +135,15 @@ StringUIdemoAudioProcessorEditor::StringUIdemoAudioProcessorEditor(StringUIdemoA
     #pragma endregion
 
     #pragma region Setup monopole
-                // Definizione dei nomi delle manopole (Aggiunte le 3 del phaser in fondo)
+                // Definizione dei nomi delle manopole (17 manopole totali)
                 juce::String nomiManopole[numManopole] = {
-                    "Time", "Feedback",           // Delay (0, 1)
-                    "Drive", "Gain",              // Distortion (2, 3)
+                    "Time", "Feedback",               // Delay (0, 1)
+                    "Drive", "Gain",                  // Distortion (2, 3)
                     "Hardness", "Damping", "Sustain", // Physical (4, 5, 6)
-                    "Rev Mix", "Rev Size",        // Reverb (7, 8)
-                    "Master",                     // Master Section (9)
-                    "P. Rate", "P. Depth", "P. Mix" // Phaser (10, 11, 12)
+                    "Rev Mix", "Rev Size",            // Reverb (7, 8)
+                    "Master",                         // Master Section (9)
+                    "P. Rate", "P. Depth", "P. Mix",  // Phaser (10, 11, 12)
+                    "Attack", "Decay", "Sustain", "Release" // ADSR (13, 14, 15, 16)
                 };
 
                 // Manopole
@@ -131,7 +156,7 @@ StringUIdemoAudioProcessorEditor::StringUIdemoAudioProcessorEditor(StringUIdemoA
                     manopolaEffetto[i].setColour(juce::Slider::textBoxTextColourId, juce::Colours::white);
 
                     // Sezione per le unità di misura
-                    if (nomiManopole[i] == "Time") {
+                    if (nomiManopole[i] == "Time" || nomiManopole[i] == "Attack" || nomiManopole[i] == "Decay" || nomiManopole[i] == "Release") {
                         manopolaEffetto[i].setTextValueSuffix(" s");
                     }
                     else if (nomiManopole[i] == "P. Rate") {
@@ -164,10 +189,10 @@ StringUIdemoAudioProcessorEditor::StringUIdemoAudioProcessorEditor(StringUIdemoA
 
     #pragma region Setup bottoni On / Off
 
-        juce::TextButton* bypassButtons[] = { &btnDelayOn, &btnDistOn, &btnRevOn, &btnPhaserOn };
-        juce::String bypassIDs[] = { "delayOn", "distOn", "revOn", "phaserOn" };
+        juce::TextButton* bypassButtons[] = { &btnDelayOn, &btnDistOn, &btnRevOn, &btnPhaserOn, &btnAdsrOn };
+        juce::String bypassIDs[] = { "delayOn", "distOn", "revOn", "phaserOn", "adsrOn" };
 
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 5; ++i)
         {
             bypassButtons[i]->setClickingTogglesState(true);
             // Colore da spento (grigio scuro)
@@ -209,11 +234,22 @@ StringUIdemoAudioProcessorEditor::StringUIdemoAudioProcessorEditor(StringUIdemoA
         phaserMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
             audioProcessor.apvts, "phaserMix", manopolaEffetto[12]);
 
+        // ADSR Attachments
+        attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            audioProcessor.apvts, "attack", manopolaEffetto[13]);
+        decayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            audioProcessor.apvts, "decay", manopolaEffetto[14]);
+        adsrSustainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            audioProcessor.apvts, "adsrSustain", manopolaEffetto[15]);
+        releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            audioProcessor.apvts, "release", manopolaEffetto[16]);
+
         // Button Attachment
         atcDelayOn = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "delayOn", btnDelayOn);
         atcDistOn = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "distOn", btnDistOn);
         atcRevOn = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "revOn", btnRevOn);
         atcPhaserOn = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "phaserOn", btnPhaserOn);
+        atcAdsrOn = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(audioProcessor.apvts, "adsrOn", btnAdsrOn);
 
     #pragma endregion
 }
@@ -265,6 +301,7 @@ void StringUIdemoAudioProcessorEditor::timerCallback()
         btnDistOn.setButtonText(btnDistOn.getToggleState() ? "ON" : "OFF");
         btnRevOn.setButtonText(btnRevOn.getToggleState() ? "ON" : "OFF");
 		btnPhaserOn.setButtonText(btnPhaserOn.getToggleState() ? "ON" : "OFF");
+		btnAdsrOn.setButtonText(btnAdsrOn.getToggleState() ? "ON" : "OFF");
     #pragma endregion
     
     #pragma region Lettura Volume Meter
@@ -311,6 +348,7 @@ void StringUIdemoAudioProcessorEditor::paint(juce::Graphics& g)
     g.fillRoundedRectangle(areaOscilloscopio.reduced(4).toFloat(), cornerRadius);
     g.fillRoundedRectangle(areaMaster.reduced(4).toFloat(), cornerRadius);
     g.fillRoundedRectangle(areaParametriFisici.reduced(4).toFloat(), cornerRadius);
+    g.fillRoundedRectangle(areaADSR.reduced(4).toFloat(), cornerRadius);
     g.fillRoundedRectangle(areaDelay.reduced(4).toFloat(), cornerRadius);
     g.fillRoundedRectangle(areaDistortion.reduced(4).toFloat(), cornerRadius);
     g.fillRoundedRectangle(areaReverb.reduced(4).toFloat(), cornerRadius);
@@ -411,12 +449,18 @@ void StringUIdemoAudioProcessorEditor::resized()
         // Creiamo una "Toolbar" orizzontale sopra le corde
         auto toolbarArea = area.removeFromBottom(30 * scale);
 
-        // Reset Button a Sinistra (allineato con la colonna dell'accordatura)
-        auto resetArea = toolbarArea.removeFromLeft(scaledTuningPanelWidth);
-        resetTuningButton.setBounds(resetArea.withSizeKeepingCentre(45 * scale, 15 * scale));
+        // Sinistra: Accordatura (Reset, Menu preset accordatura, Salva, Elimina)
+        auto leftToolbar = toolbarArea.removeFromLeft(380 * scale);
+        resetTuningButton.setBounds(leftToolbar.removeFromLeft(45 * scale).withSizeKeepingCentre(45 * scale, 18 * scale));
+        leftToolbar.removeFromLeft(5 * scale);
+        tuningMenu.setBounds(leftToolbar.removeFromLeft(175 * scale).withSizeKeepingCentre(175 * scale, 20 * scale));
+        leftToolbar.removeFromLeft(5 * scale);
+        saveTuningButton.setBounds(leftToolbar.removeFromLeft(50 * scale).withSizeKeepingCentre(50 * scale, 18 * scale));
+        leftToolbar.removeFromLeft(5 * scale);
+        deleteTuningButton.setBounds(leftToolbar.removeFromLeft(55 * scale).withSizeKeepingCentre(55 * scale, 18 * scale));
 
         // Preset Menu a Destra (con un po' di margine dal bordo per non attaccarlo)
-        auto presetArea = toolbarArea.removeFromRight(150 * scale).reduced(5 * scale, 7 * scale);
+        auto presetArea = toolbarArea.removeFromRight(150 * scale).reduced(5 * scale, 5 * scale);
         presetMenu.setBounds(presetArea);
 
         // Nota Suonata al Centro (prende tutto lo spazio rimanente tra il Reset e i Preset)
@@ -436,8 +480,10 @@ void StringUIdemoAudioProcessorEditor::resized()
         auto rightBottomArea = rightArea;
 
         // --- RIGA SUPERIORE --- 
-        // Parametri Fisici (circa 65% dello spazio) e Distorsione (circa 35% dello spazio)
-        areaParametriFisici = rightTopArea.removeFromLeft((rightTopArea.getWidth() * 2) / 3);
+        // Parametri Fisici (~28%), ADSR (~44%), Distorsione (~28%)
+        int totalTopW = rightTopArea.getWidth();
+        areaParametriFisici = rightTopArea.removeFromLeft((totalTopW * 28) / 100);
+        areaADSR = rightTopArea.removeFromLeft((totalTopW * 44) / 100);
         areaDistortion = rightTopArea;
 
         // --- RIGA INFERIORE --- 
@@ -448,28 +494,30 @@ void StringUIdemoAudioProcessorEditor::resized()
     #pragma endregion
 
     #pragma region Griglia manopole scalata
-        // Assegnazione titoli manopole
-        juce::Rectangle<int> celle[13];
+        // Assegnazione titoli manopole (17 manopole)
+        juce::Rectangle<int> celle[17];
 
         // Creiamo delle "copie di lavoro" delle aree. 
         // In questo modo non rimpiccioliamo le aree originali usate dal paint() per i bordi
         auto workOsc = areaOscilloscopio;
         auto workMaster = areaMaster;
         auto workPhys = areaParametriFisici;
-        auto workDelay = areaDelay;
+        auto workAdsr = areaADSR;
         auto workDist = areaDistortion;
+        auto workDelay = areaDelay;
+        auto workPhaser = areaPhaser;
         auto workRev = areaReverb;
-		auto workPhaser = areaPhaser;
 
         // Ritagliamo 35 pixel dall'alto di ogni area per far spazio ai titoli
         int titleHeight = 35 * scale;
         titoloSezione[0].setBounds(workOsc.removeFromTop(titleHeight));
         titoloSezione[1].setBounds(workMaster.removeFromTop(titleHeight));
         titoloSezione[2].setBounds(workPhys.removeFromTop(titleHeight));
-        titoloSezione[3].setBounds(workDelay.removeFromTop(titleHeight).reduced(30 * scale, 0));
+        titoloSezione[3].setBounds(workAdsr.removeFromTop(titleHeight).reduced(30 * scale, 0));
         titoloSezione[4].setBounds(workDist.removeFromTop(titleHeight).reduced(30 * scale, 0));
-        titoloSezione[5].setBounds(workPhaser.removeFromTop(titleHeight).reduced(30 * scale, 0));
-        titoloSezione[6].setBounds(workRev.removeFromTop(titleHeight).reduced(30 * scale, 0));
+        titoloSezione[5].setBounds(workDelay.removeFromTop(titleHeight).reduced(30 * scale, 0));
+        titoloSezione[6].setBounds(workPhaser.removeFromTop(titleHeight).reduced(30 * scale, 0));
+        titoloSezione[7].setBounds(workRev.removeFromTop(titleHeight).reduced(30 * scale, 0));
 
         // Scaliamo il font dei titoli
         for (int i = 0; i < numSezioni; ++i)
@@ -483,11 +531,9 @@ void StringUIdemoAudioProcessorEditor::resized()
         celle[1] = delayArea;
 
         // Distortion (Celle 2, 3)
-        // Riduciamo un po' i margini (5 invece di 10) visto che il titolo ha già preso spazio
         auto distArea = workDist.reduced(5 * scale, 5 * scale);
         celle[2] = distArea.removeFromLeft(distArea.getWidth() / 2);
         celle[3] = distArea;
-
 
         // Parametri fisici (Celle 4, 5, 6)
         auto physArea = workPhys.reduced(5 * scale, 5 * scale);
@@ -508,6 +554,13 @@ void StringUIdemoAudioProcessorEditor::resized()
         celle[10] = phasArea.removeFromLeft(phasArea.getWidth() / 3); // Rate
         celle[11] = phasArea.removeFromLeft(phasArea.getWidth() / 2); // Depth
         celle[12] = phasArea; // Mix
+
+        // ADSR (Celle 13, 14, 15, 16)
+        auto adsrArea = workAdsr.reduced(5 * scale, 5 * scale);
+        celle[13] = adsrArea.removeFromLeft(adsrArea.getWidth() / 4); // Attack
+        celle[14] = adsrArea.removeFromLeft(adsrArea.getWidth() / 3); // Decay
+        celle[15] = adsrArea.removeFromLeft(adsrArea.getWidth() / 2); // Sustain
+        celle[16] = adsrArea;                                        // Release
 
         // Ciclo di posizionamento finale
         // Impostiamo un diametro fisso e uguale per tutte le manopole.
@@ -534,16 +587,17 @@ void StringUIdemoAudioProcessorEditor::resized()
         int marginX = 10 * scale;
 
         // Calcoliamo la Y esatta per centrare il bottone verticalmente rispetto al testo del titolo.
-        int delayY = titoloSezione[3].getBounds().getCentreY() - (btnH / 2);
+        int adsrY = titoloSezione[3].getBounds().getCentreY() - (btnH / 2);
         int distY = titoloSezione[4].getBounds().getCentreY() - (btnH / 2);
-        int revY = titoloSezione[5].getBounds().getCentreY() - (btnH / 2);
-        int phasY = titoloSezione[5].getBounds().getCentreY() - (btnH / 2);
+        int delayY = titoloSezione[5].getBounds().getCentreY() - (btnH / 2);
+        int phasY = titoloSezione[6].getBounds().getCentreY() - (btnH / 2);
+        int revY = titoloSezione[7].getBounds().getCentreY() - (btnH / 2);
 
-        // Posizioniamoli usando il limite destro dell'area totale (areaDelay, ecc.) e la Y appena calcolata
-        btnDelayOn.setBounds(areaDelay.getRight() - btnW - marginX, delayY, btnW, btnH);
+        btnAdsrOn.setBounds(areaADSR.getRight() - btnW - marginX, adsrY, btnW, btnH);
         btnDistOn.setBounds(areaDistortion.getRight() - btnW - marginX, distY, btnW, btnH);
-        btnRevOn.setBounds(areaReverb.getRight() - btnW - marginX, revY, btnW, btnH);
+        btnDelayOn.setBounds(areaDelay.getRight() - btnW - marginX, delayY, btnW, btnH);
         btnPhaserOn.setBounds(areaPhaser.getRight() - btnW - marginX, phasY, btnW, btnH);
+        btnRevOn.setBounds(areaReverb.getRight() - btnW - marginX, revY, btnW, btnH);
     #pragma endregion
 
     #pragma region Posizionamento Volume Meter
@@ -646,6 +700,119 @@ void StringUIdemoAudioProcessorEditor::updateAllTuningLabels()
     for (int i = 0; i < StringUIdemoAudioProcessor::numStrings; ++i)
         updateTuningLabel(i);
 }
+
+void StringUIdemoAudioProcessorEditor::populateTuningMenu()
+{
+    tuningMenu.clear(juce::dontSendNotification);
+
+    tuningMenu.addItem("Standard (E A D G B E)", 1);
+    tuningMenu.addItem("Drop D (D A D G B E)", 2);
+    tuningMenu.addItem("Half Step Down (Eb)", 3);
+    tuningMenu.addItem("Open G (D G D G B D)", 4);
+    tuningMenu.addItem("DADGAD (D A D G A D)", 5);
+
+    auto customList = audioProcessor.loadCustomTunings();
+    if (!customList.empty())
+    {
+        tuningMenu.addSeparator();
+        for (size_t i = 0; i < customList.size(); ++i)
+        {
+            tuningMenu.addItem(customList[i].name, 100 + (int)i);
+        }
+    }
+}
+
+void StringUIdemoAudioProcessorEditor::applySelectedTuning(int itemId)
+{
+    if (itemId <= 0) return;
+
+    if (itemId == 1) // Standard
+    {
+        audioProcessor.applyTuning({ 64, 59, 55, 50, 45, 40 });
+        deleteTuningButton.setEnabled(false);
+    }
+    else if (itemId == 2) // Drop D
+    {
+        audioProcessor.applyTuning({ 62, 59, 55, 50, 45, 40 });
+        deleteTuningButton.setEnabled(false);
+    }
+    else if (itemId == 3) // Half Step Down
+    {
+        audioProcessor.applyTuning({ 63, 58, 54, 49, 44, 39 });
+        deleteTuningButton.setEnabled(false);
+    }
+    else if (itemId == 4) // Open G
+    {
+        audioProcessor.applyTuning({ 62, 57, 55, 50, 47, 38 });
+        deleteTuningButton.setEnabled(false);
+    }
+    else if (itemId == 5) // DADGAD
+    {
+        audioProcessor.applyTuning({ 62, 59, 55, 50, 47, 38 });
+        deleteTuningButton.setEnabled(false);
+    }
+    else if (itemId >= 100)
+    {
+        int idx = itemId - 100;
+        auto customList = audioProcessor.loadCustomTunings();
+        if (idx >= 0 && idx < (int)customList.size())
+        {
+            audioProcessor.applyTuning(customList[(size_t)idx].notes);
+            deleteTuningButton.setEnabled(true);
+        }
+    }
+
+    updateAllTuningLabels();
+}
+
+void StringUIdemoAudioProcessorEditor::promptSaveCustomTuning()
+{
+    auto* aw = new juce::AlertWindow("Salva Accordatura", "Inserisci il nome per l'accordatura personalizzata:", juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor("name", "Custom " + juce::String(audioProcessor.loadCustomTunings().size() + 1));
+    aw->addButton("Salva", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    aw->addButton("Annulla", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    aw->enterModalState(true, juce::ModalCallbackFunction::create([this, aw](int result)
+    {
+        if (result == 1)
+        {
+            auto name = aw->getTextEditorContents("name").trim();
+            if (name.isNotEmpty())
+            {
+                std::array<int, StringUIdemoAudioProcessor::numStrings> notes;
+                for (int i = 0; i < StringUIdemoAudioProcessor::numStrings; ++i)
+                    notes[i] = audioProcessor.getStringMidiNote(i);
+
+                audioProcessor.saveCustomTuning(name, notes);
+                populateTuningMenu();
+
+                // Seleziona la nuova accordatura salvata
+                for (int i = 0; i < tuningMenu.getNumItems(); ++i)
+                {
+                    if (tuningMenu.getItemText(i) == name)
+                    {
+                        tuningMenu.setSelectedItemIndex(i, juce::dontSendNotification);
+                        deleteTuningButton.setEnabled(true);
+                        break;
+                    }
+                }
+            }
+        }
+        delete aw;
+    }));
+}
+
+void StringUIdemoAudioProcessorEditor::deleteSelectedCustomTuning()
+{
+    int selectedId = tuningMenu.getSelectedId();
+    if (selectedId >= 100)
+    {
+        juce::String name = tuningMenu.getText();
+        audioProcessor.deleteCustomTuning(name);
+        populateTuningMenu();
+        tuningMenu.setSelectedId(1);
+    }
+}
 #pragma endregion
 
 
@@ -736,6 +903,7 @@ void StringUIdemoAudioProcessorEditor::applicaPreset(int presetId)
         setParam("hardness", 0.5f); setParam("damping", 100.0f); setParam("sustain", 100.0f);
         setParam("delayOn", 0.0f); setParam("distOn", 0.0f); setParam("revOn", 0.0f);
         setParam("phaserRate", 1.0f); setParam("phaserDepth", 0.5f); setParam("phaserMix", 50.0f); setParam("phaserOn", 0.0f);
+        setParam("attack", 0.01f); setParam("decay", 0.5f); setParam("adsrSustain", 100.0f); setParam("release", 1.0f); setParam("adsrOn", 1.0f);
 
 		// Accordatura Standard Chitarra: E2, A2, D3, G3, B3, E4 (invertita perchè le corde sono ordinate dalla più grave alla più acuta)
         setTuning(64, 59, 55, 50, 45, 40);
@@ -747,6 +915,7 @@ void StringUIdemoAudioProcessorEditor::applicaPreset(int presetId)
         setParam("hardness",0.01f); setParam("damping", 100.0f); setParam("sustain", 100.0f);
         setParam("delayOn", 1.0f); setParam("distOn", 1.0f); setParam("revOn", 1.0f);
         setParam("phaserRate", 1.0f); setParam("phaserDepth", 0.5f); setParam("phaserMix", 50.0f); setParam("phaserOn", 0.0f);
+        setParam("attack", 0.20f); setParam("decay", 1.0f); setParam("adsrSustain", 80.0f); setParam("release", 2.5f); setParam("adsrOn", 1.0f);
 
         setTuning(60, 57, 55, 52, 50, 48);
         break;
@@ -757,6 +926,7 @@ void StringUIdemoAudioProcessorEditor::applicaPreset(int presetId)
         setParam("hardness", 0.80f); setParam("damping", 100.0f); setParam("sustain", 100.0f);
         setParam("delayOn", 1.0f); setParam("distOn", 1.0f); setParam("revOn", 1.0f);
         setParam("phaserRate", 1.0f); setParam("phaserDepth", 0.5f); setParam("phaserMix", 50.0f); setParam("phaserOn", 0.0f);
+        setParam("attack", 0.002f); setParam("decay", 0.3f); setParam("adsrSustain", 100.0f); setParam("release", 1.2f); setParam("adsrOn", 1.0f);
 
         setTuning(76, 71, 67, 62, 57, 52);
         break;
@@ -767,6 +937,7 @@ void StringUIdemoAudioProcessorEditor::applicaPreset(int presetId)
         setParam("hardness", 0.20f); setParam("damping", 90.0f); setParam("sustain", 80.0f);
         setParam("delayOn", 1.0f); setParam("distOn", 1.0f); setParam("revOn", 0.0f);
         setParam("phaserRate", 1.0f); setParam("phaserDepth", 0.5f); setParam("phaserMix", 50.0f); setParam("phaserOn", 0.0f);
+        setParam("attack", 0.005f); setParam("decay", 0.6f); setParam("adsrSustain", 85.0f); setParam("release", 0.8f); setParam("adsrOn", 1.0f);
 
         setTuning(60, 55, 50, 45, 40, 47);
         break;

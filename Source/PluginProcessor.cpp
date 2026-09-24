@@ -51,6 +51,13 @@ StringUIdemoAudioProcessor::StringUIdemoAudioProcessor()
     phaserMixParameter = apvts.getRawParameterValue("phaserMix");
     phaserOnParameter = apvts.getRawParameterValue("phaserOn");
 
+    // Parametri ADSR
+    adsrAttackParameter = apvts.getRawParameterValue("attack");
+    adsrDecayParameter = apvts.getRawParameterValue("decay");
+    adsrSustainParameter = apvts.getRawParameterValue("adsrSustain");
+    adsrReleaseParameter = apvts.getRawParameterValue("release");
+    adsrOnParameter = apvts.getRawParameterValue("adsrOn");
+
 #pragma endregion
 }
 
@@ -101,9 +108,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout StringUIdemoAudioProcessor::
     params.push_back(std::make_unique<juce::AudioParameterBool>("distOn", "Distortion On", true));
     params.push_back(std::make_unique<juce::AudioParameterBool>("revOn", "Reverb On", true));
     params.push_back(std::make_unique<juce::AudioParameterBool>("phaserOn", "Phaser On", true));
-    /*
-    * 
-    */
+
+    // Parametri Inviluppo ADSR
+    params.push_back(std::make_unique<juce::AudioParameterFloat>("attack", "Attack", 0.001f, 2.0f, 0.01f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>("decay", "Decay", 0.01f, 3.0f, 0.5f));
+    params.push_back(std::make_unique<juce::AudioParameterInt>("adsrSustain", "Sustain", 0, 100, 100));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>("release", "Release", 0.01f, 3.0f, 1.0f));
+    params.push_back(std::make_unique<juce::AudioParameterBool>("adsrOn", "ADSR On", true));
 
 	return { params.begin(), params.end() };
 }
@@ -170,6 +181,124 @@ void StringUIdemoAudioProcessor::resetTuning()
 {
     for (int i = 0; i < numStrings; ++i)
         setStringMidiNote(i, defaultMidiNotes[i]);
+}
+
+void StringUIdemoAudioProcessor::releaseAllStrings()
+{
+    for (int i = 0; i < stringSynths.size(); ++i)
+        stringSynths.getUnchecked(i)->noteOff();
+}
+
+void StringUIdemoAudioProcessor::noteOffString(int stringIndex)
+{
+    if (stringIndex >= 0 && stringIndex < stringSynths.size())
+        stringSynths.getUnchecked(stringIndex)->noteOff();
+}
+
+juce::File StringUIdemoAudioProcessor::getCustomTuningsFile()
+{
+    auto dir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                    .getChildFile("stringUIdemo");
+    if (!dir.exists())
+        dir.createDirectory();
+    return dir.getChildFile("custom_tunings.xml");
+}
+
+std::vector<StringUIdemoAudioProcessor::CustomTuning> StringUIdemoAudioProcessor::loadCustomTunings()
+{
+    std::vector<CustomTuning> tunings;
+    auto file = getCustomTuningsFile();
+    if (!file.existsAsFile())
+        return tunings;
+
+    auto xml = juce::XmlDocument::parse(file);
+    if (xml != nullptr && xml->hasTagName("CUSTOM_TUNINGS"))
+    {
+        for (auto* el : xml->getChildIterator())
+        {
+            if (el->hasTagName("TUNING"))
+            {
+                CustomTuning t;
+                t.name = el->getStringAttribute("name", "Custom");
+                auto notesStr = el->getStringAttribute("notes");
+                auto tokens = juce::StringArray::fromTokens(notesStr, " ", "");
+                if (tokens.size() == numStrings)
+                {
+                    for (int i = 0; i < numStrings; ++i)
+                        t.notes[i] = tokens[i].getIntValue();
+                    tunings.push_back(t);
+                }
+            }
+        }
+    }
+    return tunings;
+}
+
+void StringUIdemoAudioProcessor::saveCustomTuning(const juce::String& name, const std::array<int, numStrings>& notes)
+{
+    auto tunings = loadCustomTunings();
+    bool updated = false;
+    for (auto& t : tunings)
+    {
+        if (t.name.equalsIgnoreCase(name))
+        {
+            t.notes = notes;
+            updated = true;
+            break;
+        }
+    }
+    if (!updated)
+    {
+        CustomTuning newTuning;
+        newTuning.name = name;
+        newTuning.notes = notes;
+        tunings.push_back(newTuning);
+    }
+
+    juce::XmlElement root("CUSTOM_TUNINGS");
+    for (const auto& t : tunings)
+    {
+        auto* el = root.createNewChildElement("TUNING");
+        el->setAttribute("name", t.name);
+        juce::String notesStr;
+        for (int i = 0; i < numStrings; ++i)
+        {
+            notesStr += juce::String(t.notes[i]);
+            if (i < numStrings - 1)
+                notesStr += " ";
+        }
+        el->setAttribute("notes", notesStr);
+    }
+    root.writeTo(getCustomTuningsFile());
+}
+
+void StringUIdemoAudioProcessor::deleteCustomTuning(const juce::String& name)
+{
+    auto tunings = loadCustomTunings();
+    juce::XmlElement root("CUSTOM_TUNINGS");
+    for (const auto& t : tunings)
+    {
+        if (!t.name.equalsIgnoreCase(name))
+        {
+            auto* el = root.createNewChildElement("TUNING");
+            el->setAttribute("name", t.name);
+            juce::String notesStr;
+            for (int i = 0; i < numStrings; ++i)
+            {
+                notesStr += juce::String(t.notes[i]);
+                if (i < numStrings - 1)
+                    notesStr += " ";
+            }
+            el->setAttribute("notes", notesStr);
+        }
+    }
+    root.writeTo(getCustomTuningsFile());
+}
+
+void StringUIdemoAudioProcessor::applyTuning(const std::array<int, numStrings>& notes)
+{
+    for (int i = 0; i < numStrings; ++i)
+        setStringMidiNote(i, notes[i]);
 }
 
 //==============================================================================
@@ -296,12 +425,26 @@ void StringUIdemoAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                     float position = (float)fret / 12.0f;
 
                     pluckString(i, position);
+                    activeMidiNoteForString[i] = midiNote;
 
                     // Comunico tramite le variabili atomic (thread-safe) alla UI
 					// che la corda i è stata pizzicata e qual è la posizione del tasto.
                     uiPluckPosition[i].store(position);
 					uiStringWasPlucked[i].store(true);
 
+                    break;
+                }
+            }
+        }
+        else if (message.isNoteOff())
+        {
+            int midiNote = message.getNoteNumber();
+            for (int i = 0; i < numStrings; ++i)
+            {
+                if (activeMidiNoteForString[i] == midiNote)
+                {
+                    noteOffString(i);
+                    activeMidiNoteForString[i] = -1;
                     break;
                 }
             }
@@ -316,6 +459,11 @@ void StringUIdemoAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
     float* channelData = buffer.getWritePointer(0);
     
+    float att = adsrAttackParameter->load();
+    float dec = adsrDecayParameter->load();
+    float sus = adsrSustainParameter->load() / 100.0f;
+    float rel = adsrReleaseParameter->load();
+    bool adsrOn = (adsrOnParameter->load() >= 0.5f);
 
     for (int i = 0; i < stringSynths.size(); ++i) {
         // Assegno l'hardness corrente su tutte le corde
@@ -323,6 +471,9 @@ void StringUIdemoAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         // Assegno i valori attuali di damp e sustain
         stringSynths.getUnchecked(i)->SetDamping(dampingParameter->load() / 100.0f);
         stringSynths.getUnchecked(i)->SetSustain(sustainParameter->load() / 100.0f);
+        // Assegno parametri ADSR
+        stringSynths.getUnchecked(i)->setAdsrParameters(att, dec, sus, rel);
+        stringSynths.getUnchecked(i)->setAdsrEnabled(adsrOn);
     }
 
 	// Genero l'audio per ogni corda e lo sommo al buffer del canale 0 (mono)
@@ -521,8 +672,37 @@ juce::AudioProcessorEditor* StringUIdemoAudioProcessor::createEditor()
     return new StringUIdemoAudioProcessorEditor(*this);
 }
 
-void StringUIdemoAudioProcessor::getStateInformation(juce::MemoryBlock&) {}
-void StringUIdemoAudioProcessor::setStateInformation(const void*, int) {}
+void StringUIdemoAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
+{
+    auto state = apvts.copyState();
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+    if (xml != nullptr)
+    {
+        auto* tuningXml = xml->createNewChildElement("CURRENT_TUNING");
+        for (int i = 0; i < numStrings; ++i)
+            tuningXml->setAttribute("string" + juce::String(i), currentMidiNotes[i]);
+
+        copyXmlToBinary(*xml, destData);
+    }
+}
+
+void StringUIdemoAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
+{
+    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
+    if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
+    {
+        apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+
+        if (auto* tuningXml = xmlState->getChildByName("CURRENT_TUNING"))
+        {
+            for (int i = 0; i < numStrings; ++i)
+            {
+                int note = tuningXml->getIntAttribute("string" + juce::String(i), defaultMidiNotes[i]);
+                setStringMidiNote(i, note);
+            }
+        }
+    }
+}
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {

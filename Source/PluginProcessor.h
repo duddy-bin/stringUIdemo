@@ -84,6 +84,23 @@ public:
     // Reimposta tutte le corde all'accordatura di default
     void resetTuning();
 
+    // Gestione ADSR: rilascio note
+    void releaseAllStrings();
+    void noteOffString(int stringIndex);
+
+    // Struttura e metodi per accordature personalizzate
+    struct CustomTuning
+    {
+        juce::String name;
+        std::array<int, numStrings> notes;
+    };
+
+    static juce::File getCustomTuningsFile();
+    std::vector<CustomTuning> loadCustomTunings();
+    void saveCustomTuning(const juce::String& name, const std::array<int, numStrings>& notes);
+    void deleteCustomTuning(const juce::String& name);
+    void applyTuning(const std::array<int, numStrings>& notes);
+
 private:
 
     #pragma region Parametri per Effettistica (UI)
@@ -108,6 +125,13 @@ private:
     std::atomic<float>* phaserMixParameter = nullptr;
     std::atomic<float>* phaserOnParameter = nullptr;
 
+    // Parametri dell'inviluppo ADSR
+    std::atomic<float>* adsrAttackParameter = nullptr;
+    std::atomic<float>* adsrDecayParameter = nullptr;
+    std::atomic<float>* adsrSustainParameter = nullptr;
+    std::atomic<float>* adsrReleaseParameter = nullptr;
+    std::atomic<float>* adsrOnParameter = nullptr;
+
     // Istanza dell'effetto Phaser (dal modulo DSP di JUCE)
     juce::dsp::Phaser<float> phaser;
 
@@ -116,6 +140,9 @@ private:
 	std::atomic<float>* distOnParameter = nullptr;
 	std::atomic<float>* delayOnParameter = nullptr;
 	std::atomic<float>* revOnParameter = nullptr;
+
+    // Tracciamento note MIDI attive per ogni corda (per gestione NoteOff ADSR)
+    int activeMidiNoteForString[numStrings] = { -1, -1, -1, -1, -1, -1 };
 
     #pragma endregion
 

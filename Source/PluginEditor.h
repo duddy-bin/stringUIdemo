@@ -32,13 +32,15 @@ public:
 private:
 
     /// Titoli delle sezioni
-    static constexpr int numSezioni = 7;
+    static constexpr int numSezioni = 8;
 	juce::Label titoloSezione[numSezioni];
 
     // Manopole
     KnobStyle stilePomello;
-    // 0: Drive, 1: gain
-    static constexpr int numManopole = 13;
+    // 0: Time, 1: Feedback, 2: Drive, 3: Gain, 4: Hardness, 5: Damping, 6: Sustain,
+    // 7: Rev Mix, 8: Rev Size, 9: Master, 10: P. Rate, 11: P. Depth, 12: P. Mix,
+    // 13: Attack, 14: Decay, 15: ADSR Sustain, 16: Release
+    static constexpr int numManopole = 17;
     juce::Slider manopolaEffetto[numManopole];
     juce::Label titoloManopolaEffetto[numManopole];
 
@@ -57,15 +59,25 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> phaserMixAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterAttachment;
 
+    // Attachment per ADSR
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> adsrSustainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> atcAdsrOn;
+
 	// Callback del Timer (Per interazione Audio Thread -> UI Thread per la MIDI)
 	void timerCallback() override;
-    /* Permette di controllare periodicamente 
-    se l'Audio Thread ha flaggato una corda come suonata.*/
 
     // Mouse
     void mouseDown(const juce::MouseEvent& e) override { handleMouseEvent(e); }
     void mouseDrag(const juce::MouseEvent& e) override { handleMouseEvent(e); }
-    void mouseUp(const juce::MouseEvent& e) override { oldPosFret = -1; oldMidiNote = -1; }
+    void mouseUp(const juce::MouseEvent& e) override
+    {
+        oldPosFret = -1;
+        oldMidiNote = -1;
+        audioProcessor.releaseAllStrings();
+    }
     void handleMouseEvent(const juce::MouseEvent& e);
 
     // Paint helpers
@@ -75,16 +87,18 @@ private:
     void SetSeparationFret(juce::Graphics&);
 
     // Tuning helpers
-    // Aggiorna la label di tuning per la corda i (mostra nome nota + delta semitoni)
     void updateTuningLabel(int stringIndex);
-
-    // Aggiorna tutte le label di tuning
     void updateAllTuningLabels();
+    void populateTuningMenu();
+    void promptSaveCustomTuning();
+    void deleteSelectedCustomTuning();
+    void applySelectedTuning(int itemId);
 
 	// Sezioni della UI
     juce::Rectangle<int> areaOscilloscopio;
     juce::Rectangle<int> areaMaster;
     juce::Rectangle<int> areaParametriFisici;
+    juce::Rectangle<int> areaADSR;
     juce::Rectangle<int> areaDelay;
     juce::Rectangle<int> areaDistortion;
     juce::Rectangle<int> areaReverb;
@@ -101,8 +115,11 @@ private:
     juce::OwnedArray<juce::TextButton> tuningUpButtons;    // [+]
     juce::OwnedArray<juce::Label>      tuningLabels;       // "E2 (+0)"
 
-    // Pulsante reset accordatura
+    // Pulsanti e menu gestione accordatura
     juce::TextButton resetTuningButton;
+    juce::ComboBox   tuningMenu;
+    juce::TextButton saveTuningButton{ "Salva" };
+    juce::TextButton deleteTuningButton{ "Elimina" };
 
     // Label nota suonata corrente
     juce::Label notaSuonataLabel;
@@ -111,23 +128,18 @@ private:
     const int numFret = 12;
     const int numCorde = 6;
 
-    // Larghezza della colonna tuning a sinistra delle corde
-    // Layout: [−](22) [Label nota(50)] [+](22)
     static constexpr int tuningPanelWidth = 110;
 
-    // Stato mouse (evita retriggering sulla stessa posizione)
     int oldPosFret = -1;
     int oldMidiNote = -1;
 
     // Sezione oscilloscopio
-	// Il parametro 2 indica i due canali stereo (sinistro e destro)
     juce::AudioVisualiserComponent oscilloscopio{ 2 };
 
     // Rettangoli per disegnare i meter
 	juce::Rectangle<int> meterLeftArea;
 	juce::Rectangle<int> meterRightArea;
 
-    // Variabili per memorizzare il valore scalato da disegnare
     float levelLeftScaled = 0.0f;
 	float levelRightScaled = 0.0f;
 
@@ -136,6 +148,7 @@ private:
     juce::TextButton btnDistOn{ "ON" };
     juce::TextButton btnRevOn{ "ON" };
     juce::TextButton btnPhaserOn{ "ON" };
+    juce::TextButton btnAdsrOn{ "ON" };
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> atcDelayOn;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> atcDistOn;

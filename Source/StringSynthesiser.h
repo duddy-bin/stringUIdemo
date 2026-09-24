@@ -10,6 +10,14 @@ public:
         delayLine.resize(maxDelayLength, 0.0f);
         excitationSample.resize(maxDelayLength, 0.0f);
         setFrequency(frequencyInHz);
+
+        adsr.setSampleRate(sampleRate);
+        juce::ADSR::Parameters defaultAdsrParams;
+        defaultAdsrParams.attack = 0.01f;
+        defaultAdsrParams.decay = 0.5f;
+        defaultAdsrParams.sustain = 1.0f;
+        defaultAdsrParams.release = 1.0f;
+        adsr.setParameters(defaultAdsrParams);
     }
 
     void SetHardness(float h) {
@@ -24,6 +32,31 @@ public:
         currentSustain = juce::jlimit(0.0f, 1.0f, s);
     }
 
+    void setAdsrParameters(float attackSec, float decaySec, float sustainLevel, float releaseSec)
+    {
+        juce::ADSR::Parameters p;
+        p.attack = attackSec;
+        p.decay = decaySec;
+        p.sustain = sustainLevel;
+        p.release = releaseSec;
+        adsr.setParameters(p);
+    }
+
+    void setAdsrEnabled(bool enabled)
+    {
+        adsrEnabled = enabled;
+    }
+
+    void noteOff()
+    {
+        adsr.noteOff();
+    }
+
+    void resetAdsr()
+    {
+        adsr.reset();
+    }
+
     void stringPlucked(float pluckPosition)
     {
         if (doPluckForNextBuffer.compareAndSetBool(1, 0))
@@ -33,7 +66,11 @@ public:
     void generateAndAddData(float* outBuffer, int numSamples)
     {
         if (doPluckForNextBuffer.compareAndSetBool(0, 1))
+        {
             exciteInternalBuffer();
+            adsr.reset();
+            adsr.noteOn();
+        }
 
         float dampCoeff = currentDamping * 0.5f;
         float feedbackGain = 0.9f + currentSustain * 0.099f;
@@ -53,7 +90,13 @@ public:
             // 3) feedback nel buffer
             delayLine[nextPos] = allpassOut * feedbackGain;
 
-            outBuffer[i] += delayLine[pos];
+            float sample = delayLine[pos];
+            if (adsrEnabled)
+            {
+                sample *= adsr.getNextSample();
+            }
+
+            outBuffer[i] += sample;
             pos = nextPos;
         }
     }
@@ -135,6 +178,9 @@ private:
     juce::Atomic<int> doPluckForNextBuffer;
     std::vector<float> excitationSample, delayLine;
     size_t pos = 0;
+
+    juce::ADSR adsr;
+    bool adsrEnabled = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StringSynthesiser)
 };
